@@ -195,3 +195,45 @@ railway up
 ¡Tu aplicación estará disponible en Railway una vez completado el despliegue! 🎉
 
 **URL de ejemplo**: `https://okx-candlestick-analyzer.railway.app` 
+
+## 🔧 **Cambios realizados para solucionar el problema**:
+
+### **1. Variables de entorno directas**:
+- ✅ Eliminé la dependencia de `env_config.py`
+- ✅ Ahora usa `os.environ.get()` directamente
+- ✅ Railway puede acceder a las variables de entorno
+
+### **2. Archivos de configuración adicionales**:
+- ✅ `runtime.txt` - Especifica versión de Python
+- ✅ `railway.toml` - Configuración específica de Railway
+- ✅ `Procfile` - Comando de inicio (ya estaba correcto)
+
+### **3. Validación de credenciales**:
+- ✅ Verifica que las credenciales estén configuradas
+- ✅ Muestra mensajes de error claros
+- ✅ Endpoint `/health` muestra el estado de las credenciales
+
+##  **Próximos pasos**:
+
+1. **Railway hará un nuevo deployment** automáticamente
+2. **Espera unos minutos** para que termine el build
+3. **Verifica las variables de entorno** en Railway Dashboard:
+   - `OKX_API_KEY`
+   - `OKX_API_SECRET` 
+   - `OKX_PASSPHRASE`
+
+## 🔍 **Para verificar que funcione**:
+
+Una vez que Railway termine el deployment, prueba:
+
+```bash
+<code_block_to_apply_changes_from>
+```
+
+## 📊 **Lo que deberías ver**:
+
+- **Si las credenciales están configuradas**: Gráficos de velas interactivos
+- **Si faltan credenciales**: Mensaje de error claro indicando qué configurar
+- **Health endpoint**: Estado de la aplicación y configuración de credenciales
+
+¡Ahora Railway debería poder desplegar correctamente tu aplicación! 🚀 
