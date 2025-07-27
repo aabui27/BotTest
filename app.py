@@ -10,9 +10,13 @@ import hashlib
 from datetime import datetime, timedelta
 import os
 import json
-from env_config import OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE
 
 app = Flask(__name__)
+
+# Obtener credenciales desde variables de entorno
+OKX_API_KEY = os.environ.get('OKX_API_KEY')
+OKX_API_SECRET = os.environ.get('OKX_API_SECRET')
+OKX_PASSPHRASE = os.environ.get('OKX_PASSPHRASE')
 
 def get_timestamp():
     """Genera timestamp en formato ISO8601 UTC"""
@@ -38,6 +42,10 @@ def get_headers(method, request_path, body=''):
 
 def get_candlestick_data(symbol='BTC-USDT', bar='5m'):
     """Obtiene datos de velas desde la API de OKX - últimas 81 velas"""
+    # Verificar que las credenciales estén configuradas
+    if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
+        return []
+    
     url_path = f'/api/v5/market/candles?instId={symbol}&bar={bar}&limit=100'
     url = 'https://www.okx.com' + url_path
     
@@ -175,6 +183,14 @@ HTML_TEMPLATE = """
             padding: 40px;
             color: #666;
         }
+        .error {
+            text-align: center;
+            padding: 40px;
+            color: #dc3545;
+            background: #f8d7da;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
     </style>
 </head>
 <body>
@@ -221,6 +237,12 @@ HTML_TEMPLATE = """
             <h3>🔄 Cargando datos...</h3>
         </div>
         
+        <div id="error" class="error" style="display: none;">
+            <h3>❌ Error de configuración</h3>
+            <p>Las credenciales de la API no están configuradas correctamente.</p>
+            <p>Verifica las variables de entorno en Railway.</p>
+        </div>
+        
         <div id="chart-container" class="chart-container"></div>
     </div>
 
@@ -232,6 +254,7 @@ HTML_TEMPLATE = """
             document.getElementById('loading').style.display = 'block';
             document.getElementById('chart-container').innerHTML = '';
             document.getElementById('stats').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
             
             fetch(`/api/candles?symbol=${symbol}&interval=${interval}`)
                 .then(response => response.json())
@@ -249,8 +272,12 @@ HTML_TEMPLATE = """
                         // Mostrar gráfico
                         Plotly.newPlot('chart-container', data.chart.data, data.chart.layout);
                     } else {
-                        document.getElementById('chart-container').innerHTML = 
-                            '<div style="text-align: center; color: red; padding: 40px;"><h3>❌ Error al cargar datos</h3><p>' + data.error + '</p></div>';
+                        if (data.error.includes('credenciales') || data.error.includes('configuradas')) {
+                            document.getElementById('error').style.display = 'block';
+                        } else {
+                            document.getElementById('chart-container').innerHTML = 
+                                '<div style="text-align: center; color: red; padding: 40px;"><h3>❌ Error al cargar datos</h3><p>' + data.error + '</p></div>';
+                        }
                     }
                 })
                 .catch(error => {
@@ -278,6 +305,13 @@ def index():
 def api_candles():
     """API endpoint para obtener datos de velas"""
     try:
+        # Verificar que las credenciales estén configuradas
+        if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
+            return jsonify({
+                'success': False,
+                'error': 'Las credenciales de la API no están configuradas correctamente'
+            })
+        
         symbol = request.args.get('symbol', 'BTC-USDT')
         interval = request.args.get('interval', '5m')
         
@@ -341,7 +375,8 @@ def health():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'service': 'OKX Candlestick Analyzer'
+        'service': 'OKX Candlestick Analyzer',
+        'credentials_configured': all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE])
     })
 
 if __name__ == "__main__":
