@@ -1,14 +1,21 @@
 from flask import Flask, render_template_string, jsonify, request
-import requests
-import pandas as pd
-import plotly.graph_objects as go
-import time
-import hmac
-import base64
-import hashlib
-from datetime import datetime
 import os
+from datetime import datetime
 import json
+
+# Importar dependencias de manera segura
+try:
+    import requests
+    import pandas as pd
+    import plotly.graph_objects as go
+    import time
+    import hmac
+    import base64
+    import hashlib
+    DEPENDENCIES_LOADED = True
+except ImportError as e:
+    print(f"Warning: Some dependencies failed to load: {e}")
+    DEPENDENCIES_LOADED = False
 
 app = Flask(__name__)
 
@@ -19,11 +26,13 @@ OKX_PASSPHRASE = os.environ.get('OKX_PASSPHRASE')
 
 def get_timestamp():
     """Genera timestamp en formato ISO8601 UTC"""
+    if not DEPENDENCIES_LOADED:
+        return ""
     return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())
 
 def generate_signature(timestamp, method, request_path, body=''):
     """Genera firma HMAC SHA256 para autenticación"""
-    if not OKX_API_SECRET:
+    if not DEPENDENCIES_LOADED or not OKX_API_SECRET:
         return ""
     message = f"{timestamp}{method}{request_path}{body}"
     mac = hmac.new(OKX_API_SECRET.encode(), message.encode(), hashlib.sha256)
@@ -31,6 +40,8 @@ def generate_signature(timestamp, method, request_path, body=''):
 
 def get_headers(method, request_path, body=''):
     """Genera headers con autenticación para la API"""
+    if not DEPENDENCIES_LOADED:
+        return {}
     timestamp = get_timestamp()
     signature = generate_signature(timestamp, method, request_path, body)
     return {
@@ -43,6 +54,9 @@ def get_headers(method, request_path, body=''):
 
 def get_candlestick_data(symbol='BTC-USDT', bar='5m'):
     """Obtiene datos de velas desde la API de OKX - últimas 81 velas"""
+    if not DEPENDENCIES_LOADED:
+        return []
+    
     try:
         # Verificar que las credenciales estén configuradas
         if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
@@ -72,8 +86,8 @@ def get_candlestick_data(symbol='BTC-USDT', bar='5m'):
 
 def create_dataframe(data):
     """Convierte los datos de la API a DataFrame"""
-    if not data:
-        return pd.DataFrame()
+    if not DEPENDENCIES_LOADED or not data:
+        return pd.DataFrame() if DEPENDENCIES_LOADED else None
     
     try:
         df = pd.DataFrame(data, columns=[
@@ -91,11 +105,11 @@ def create_dataframe(data):
         return df
     except Exception as e:
         print(f"Error creating dataframe: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame() if DEPENDENCIES_LOADED else None
 
 def create_candlestick_chart(df, symbol):
     """Crea gráfico de velas con Plotly"""
-    if df.empty:
+    if not DEPENDENCIES_LOADED or df is None or df.empty:
         return None
     
     try:
@@ -323,6 +337,12 @@ def index():
 def api_candles():
     """API endpoint para obtener datos de velas"""
     try:
+        if not DEPENDENCIES_LOADED:
+            return jsonify({
+                'success': False,
+                'error': 'Las dependencias no se cargaron correctamente'
+            })
+        
         # Verificar que las credenciales estén configuradas
         if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
             return jsonify({
@@ -345,7 +365,7 @@ def api_candles():
         # Crear DataFrame
         df = create_dataframe(data)
         
-        if df.empty:
+        if df is None or df.empty:
             return jsonify({
                 'success': False,
                 'error': 'No hay datos disponibles'
@@ -401,6 +421,7 @@ def health():
             'timestamp': datetime.now().isoformat(),
             'service': 'OKX Candlestick Analyzer',
             'credentials_configured': all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]),
+            'dependencies_loaded': DEPENDENCIES_LOADED,
             'python_version': '3.11.5',
             'port': os.environ.get('PORT', '8080')
         })
@@ -417,7 +438,8 @@ def test():
     return jsonify({
         'message': 'OKX Candlestick Analyzer is running!',
         'timestamp': datetime.now().isoformat(),
-        'status': 'success'
+        'status': 'success',
+        'dependencies_loaded': DEPENDENCIES_LOADED
     })
 
 @app.route('/debug')
@@ -430,10 +452,12 @@ def debug():
         'environment': os.environ.get('RAILWAY_ENVIRONMENT', 'production'),
         'python_version': '3.11.5',
         'flask_version': '2.3.3',
+        'dependencies_loaded': DEPENDENCIES_LOADED,
         'credentials_configured': all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE])
     })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"Starting Flask app on port {port}")
+    print(f"Dependencies loaded: {DEPENDENCIES_LOADED}")
     app.run(host="0.0.0.0", port=port, debug=False) 
