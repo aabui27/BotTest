@@ -323,21 +323,35 @@ def api_candles():
 @app.route('/health')
 def health():
     """Endpoint de salud para Railway"""
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'service': 'OKX Candlestick Analyzer',
-        'credentials_configured': all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]),
-        'python_version': '3.11.5'
-    })
+    try:
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'service': 'OKX Candlestick Analyzer',
+            'credentials_configured': all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]),
+            'python_version': '3.11.5',
+            'port': os.environ.get('PORT', '8080')
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/test')
 def test():
     """Endpoint de prueba simple"""
     return jsonify({
         'message': 'OKX Candlestick Analyzer is running!',
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'status': 'success'
     })
+
+@app.route('/ping')
+def ping():
+    """Endpoint simple para healthcheck"""
+    return "pong"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
