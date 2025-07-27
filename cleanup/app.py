@@ -35,10 +35,6 @@ OKX_API_KEY = os.getenv('OKX_API_KEY')
 OKX_API_SECRET = os.getenv('OKX_API_SECRET')
 OKX_PASSPHRASE = os.getenv('OKX_PASSPHRASE')
 
-OKX_API_KEY = '81f45610-8548-4f35-a924-e8f6d3fd1c73'
-OKX_API_SECRET = 'E49D013030937CBCC8EAE8311DBA705B'
-OKX_PASSPHRASE = 'Tato1998!' 
-
 # API Keys desde variables de entorno o valores por defecto
 API_KEYS = {
     os.getenv('N8N_API_KEY', 'n8n-secure-key-2025'): 'n8n_user',
