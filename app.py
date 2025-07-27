@@ -1,16 +1,19 @@
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request, send_file
 import os
 from datetime import datetime
 import json
+import io
+import base64
 
 # Importar dependencias de manera segura
 try:
     import requests
     import pandas as pd
     import plotly.graph_objects as go
+    import plotly.io as pio
     import time
     import hmac
-    import base64
+    import base64 as base64_lib
     import hashlib
     DEPENDENCIES_LOADED = True
 except ImportError as e:
@@ -36,7 +39,7 @@ def generate_signature(timestamp, method, request_path, body=''):
         return ""
     message = f"{timestamp}{method}{request_path}{body}"
     mac = hmac.new(OKX_API_SECRET.encode(), message.encode(), hashlib.sha256)
-    return base64.b64encode(mac.digest()).decode()
+    return base64_lib.b64encode(mac.digest()).decode()
 
 def get_headers(method, request_path, body=''):
     """Genera headers con autenticación para la API"""
@@ -95,11 +98,17 @@ def create_dataframe(data):
             'volume', 'volume_currency', 'volume_currency_2', 'trades'
         ])
         
-        # Convertir tipos de datos
-        df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='ms')
-        df[['open', 'high', 'low', 'close']] = df[['open', 'high', 'low', 'close']].astype(float)
+        # Limpiar y validar datos antes de convertir
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # Ordenar por timestamp (más reciente primero en la API, pero queremos cronológico)
+        # Eliminar filas con valores NaN
+        df = df.dropna(subset=['open', 'high', 'low', 'close'])
+        
+        # Convertir timestamp
+        df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='ms')
+        
+        # Ordenar por timestamp
         df = df.sort_values('timestamp')
         
         return df
@@ -400,6 +409,146 @@ def api_candles():
             'stats': stats,
             'candles_count': len(df)
         })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/api/chart-base64')
+def api_chart_base64():
+    """API endpoint para obtener la imagen del gráfico de velas como base64"""
+    try:
+        if not DEPENDENCIES_LOADED:
+            return jsonify({
+                'success': False,
+                'error': 'Las dependencias no se cargaron correctamente'
+            })
+        
+        # Verificar que las credenciales estén configuradas
+        if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
+            return jsonify({
+                'success': False,
+                'error': 'Las credenciales de la API no están configuradas correctamente'
+            })
+        
+        symbol = request.args.get('symbol', 'BTC-USDT')
+        interval = request.args.get('interval', '5m')
+        
+        # Obtener datos
+        data = get_candlestick_data(symbol, interval)
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No se pudieron obtener datos de la API'
+            })
+        
+        # Crear DataFrame
+        df = create_dataframe(data)
+        
+        if df is None or df.empty:
+            return jsonify({
+                'success': False,
+                'error': 'No hay datos disponibles'
+            })
+        
+        # Crear gráfico
+        fig = create_candlestick_chart(df, symbol)
+        
+        if fig is None:
+            return jsonify({
+                'success': False,
+                'error': 'Error al crear el gráfico'
+            })
+        
+        # Convertir gráfico a PNG y luego a base64
+        img_bytes = pio.to_image(fig, format="png")
+        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+        
+        # Calcular estadísticas
+        prices = df['close'].values
+        volumes = df['volume'].values
+        
+        stats = {
+            'high': float(prices.max()),
+            'low': float(prices.min()),
+            'change': round(((prices[-1] - prices[0]) / prices[0]) * 100, 2),
+            'volume': float(volumes.sum())
+        }
+        
+        return jsonify({
+            'success': True,
+            'image_base64': img_base64,
+            'stats': stats,
+            'candles_count': len(df),
+            'symbol': symbol,
+            'interval': interval,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/api/chart-image')
+def api_chart_image():
+    """API endpoint para obtener la imagen del gráfico de velas como PNG"""
+    try:
+        if not DEPENDENCIES_LOADED:
+            return jsonify({
+                'success': False,
+                'error': 'Las dependencias no se cargaron correctamente'
+            })
+        
+        # Verificar que las credenciales estén configuradas
+        if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
+            return jsonify({
+                'success': False,
+                'error': 'Las credenciales de la API no están configuradas correctamente'
+            })
+        
+        symbol = request.args.get('symbol', 'BTC-USDT')
+        interval = request.args.get('interval', '5m')
+        
+        # Obtener datos
+        data = get_candlestick_data(symbol, interval)
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No se pudieron obtener datos de la API'
+            })
+        
+        # Crear DataFrame
+        df = create_dataframe(data)
+        
+        if df is None or df.empty:
+            return jsonify({
+                'success': False,
+                'error': 'No hay datos disponibles'
+            })
+        
+        # Crear gráfico
+        fig = create_candlestick_chart(df, symbol)
+        
+        if fig is None:
+            return jsonify({
+                'success': False,
+                'error': 'Error al crear el gráfico'
+            })
+        
+        # Convertir gráfico a PNG
+        img_bytes = pio.to_image(fig, format="png")
+        
+        # Devolver la imagen como un archivo PNG
+        return send_file(
+            io.BytesIO(img_bytes),
+            mimetype='image/png'
+        )
         
     except Exception as e:
         return jsonify({
