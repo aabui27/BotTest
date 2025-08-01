@@ -710,6 +710,7 @@ def health():
                 'data': '/api/candles',
                 'n8n': '/api/n8n',
                 'n8n_image': '/api/n8n-image',
+                'n8n_image_base64': '/api/n8n-image-base64',
                 'chart_image': '/api/chart-image',
                 'health': '/health'
             }
@@ -847,6 +848,89 @@ def api_n8n_image():
                         io.BytesIO(img_bytes),
                         mimetype='image/png'
                     )
+        except Exception as e:
+            print(f"Error generating matplotlib chart: {e}")
+        
+        # Si matplotlib no está disponible o falla, devolver error
+        return jsonify({
+            'success': False,
+            'error': 'No se puede generar imagen (matplotlib no disponible o error)',
+            'alternative': 'Use /api/n8n para obtener datos JSON',
+            'matplotlib_available': MATPLOTLIB_AVAILABLE
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        })
+
+@app.route('/api/n8n-image-base64')
+def api_n8n_image_base64():
+    """Endpoint específico para n8n - imagen PNG en base64 usando matplotlib"""
+    try:
+        if not DEPENDENCIES_LOADED:
+            return jsonify({
+                'success': False,
+                'error': 'Las dependencias no se cargaron correctamente'
+            })
+        
+        # Verificar que las credenciales estén configuradas
+        if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
+            return jsonify({
+                'success': False,
+                'error': 'Las credenciales de la API no están configuradas correctamente'
+            })
+        
+        symbol = request.args.get('symbol', 'BTC-USDT')
+        interval = request.args.get('interval', '5m')
+        
+        # Obtener datos
+        data = get_candlestick_data(symbol, interval)
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No se pudieron obtener datos de la API'
+            })
+        
+        # Crear DataFrame
+        df = create_dataframe(data)
+        
+        if df is None or df.empty:
+            return jsonify({
+                'success': False,
+                'error': 'No hay datos disponibles'
+            })
+        
+        # Intentar generar imagen con matplotlib
+        try:
+            if MATPLOTLIB_AVAILABLE:
+                img_bytes = create_matplotlib_chart(df, symbol)
+                if img_bytes:
+                    # Convertir a base64
+                    import base64
+                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                    
+                    # Obtener la última vela para información adicional
+                    latest_candle = df.iloc[-1]
+                    change = latest_candle['close'] - latest_candle['open']
+                    change_percent = (change / latest_candle['open']) * 100
+                    
+                    return jsonify({
+                        'success': True,
+                        'timestamp': datetime.now().isoformat(),
+                        'symbol': symbol,
+                        'interval': interval,
+                        'image_base64': img_base64,
+                        'image_format': 'png',
+                        'image_size_bytes': len(img_bytes),
+                        'current_price': float(latest_candle['close']),
+                        'change_percent': float(change_percent),
+                        'trend': 'up' if change >= 0 else 'down',
+                        'candles_count': len(df)
+                    })
         except Exception as e:
             print(f"Error generating matplotlib chart: {e}")
         
