@@ -15,10 +15,33 @@ try:
     import hmac
     import base64 as base64_lib
     import hashlib
+    
+    # Importar matplotlib para generación de imágenes alternativa
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+        import io
+        MATPLOTLIB_AVAILABLE = True
+    except ImportError:
+        MATPLOTLIB_AVAILABLE = False
+        print("Warning: Matplotlib not available - alternative image generation will be limited")
+    
+    # Intentar importar Kaleido (opcional)
+    try:
+        import kaleido
+        KALEIDO_AVAILABLE = True
+    except ImportError:
+        KALEIDO_AVAILABLE = False
+        print("Warning: Kaleido not available - PNG generation will be limited")
+    
     DEPENDENCIES_LOADED = True
 except ImportError as e:
     print(f"Warning: Some dependencies failed to load: {e}")
     DEPENDENCIES_LOADED = False
+    KALEIDO_AVAILABLE = False
+    MATPLOTLIB_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -141,6 +164,80 @@ def create_candlestick_chart(df, symbol):
         return fig
     except Exception as e:
         print(f"Error creating chart: {e}")
+        return None
+
+def create_matplotlib_chart(df, symbol):
+    """Crea un gráfico de velas usando matplotlib (alternativa a Plotly)"""
+    if not MATPLOTLIB_AVAILABLE or df is None or df.empty:
+        return None
+    
+    try:
+        # Crear figura
+        fig = Figure(figsize=(12, 8), facecolor='black')
+        canvas = FigureCanvas(fig)
+        ax = fig.add_subplot(111, facecolor='black')
+        
+        # Configurar colores
+        up_color = '#00ff88'
+        down_color = '#ff4444'
+        
+        # Preparar datos
+        dates = df['timestamp'].values
+        opens = df['open'].values
+        highs = df['high'].values
+        lows = df['low'].values
+        closes = df['close'].values
+        
+        # Crear velas
+        for i in range(len(dates)):
+            color = up_color if closes[i] >= opens[i] else down_color
+            
+            # Línea vertical (mecha)
+            ax.plot([i, i], [lows[i], highs[i]], color=color, linewidth=1)
+            
+            # Cuerpo de la vela
+            body_height = abs(closes[i] - opens[i])
+            body_bottom = min(opens[i], closes[i])
+            
+            if body_height > 0:
+                ax.bar(i, body_height, bottom=body_bottom, color=color, 
+                      width=0.8, alpha=0.8)
+            else:
+                # Línea horizontal para velas sin cuerpo
+                ax.plot([i-0.4, i+0.4], [opens[i], opens[i]], color=color, linewidth=2)
+        
+        # Configurar gráfico
+        ax.set_title(f'{symbol} Candlestick Chart', color='white', fontsize=16, pad=20)
+        ax.set_xlabel('Time', color='white', fontsize=12)
+        ax.set_ylabel('Price (USDT)', color='white', fontsize=12)
+        
+        # Configurar ejes
+        ax.tick_params(colors='white')
+        ax.grid(True, alpha=0.3, color='gray')
+        
+        # Configurar etiquetas del eje X
+        if len(dates) > 10:
+            step = len(dates) // 10
+            ax.set_xticks(range(0, len(dates), step))
+            ax.set_xticklabels([pd.Timestamp(dates[i]).strftime('%H:%M') for i in range(0, len(dates), step)], 
+                              rotation=45, color='white')
+        else:
+            ax.set_xticks(range(len(dates)))
+            ax.set_xticklabels([pd.Timestamp(d).strftime('%H:%M') for d in dates], rotation=45, color='white')
+        
+        # Ajustar layout
+        fig.tight_layout()
+        
+        # Convertir a bytes
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', facecolor='black', edgecolor='none', 
+                   bbox_inches='tight', dpi=100)
+        img_buffer.seek(0)
+        
+        return img_buffer.getvalue()
+        
+    except Exception as e:
+        print(f"Error creating matplotlib chart: {e}")
         return None
 
 # HTML template para la página web
@@ -541,14 +638,48 @@ def api_chart_image():
                 'error': 'Error al crear el gráfico'
             })
         
-        # Convertir gráfico a PNG
-        img_bytes = pio.to_image(fig, format="png")
+        # Verificar si Kaleido está disponible
+        if not KALEIDO_AVAILABLE:
+            return jsonify({
+                'success': False,
+                'error': 'Generación de imágenes PNG no disponible (Kaleido/Chrome no instalado)',
+                'alternative': 'Use /api/candles o /api/n8n para obtener datos JSON',
+                'chart_data': {
+                    'symbol': symbol,
+                    'interval': interval,
+                    'last_price': float(df['close'].iloc[-1]) if not df.empty else None,
+                    'data_points': len(df) if not df.empty else 0
+                }
+            })
         
-        # Devolver la imagen como un archivo PNG
-        return send_file(
-            io.BytesIO(img_bytes),
-            mimetype='image/png'
-        )
+        # Convertir gráfico a PNG con manejo de errores
+        try:
+            img_bytes = pio.to_image(fig, format="png")
+            
+            # Devolver la imagen como un archivo PNG
+            return send_file(
+                io.BytesIO(img_bytes),
+                mimetype='image/png'
+            )
+        except Exception as chrome_error:
+            # Si falla la generación de imagen, devolver datos JSON como alternativa
+            if "Chrome" in str(chrome_error) or "Kaleido" in str(chrome_error):
+                return jsonify({
+                    'success': False,
+                    'error': 'No se puede generar imagen PNG (Chrome no disponible)',
+                    'alternative': 'Use /api/candles o /api/n8n para obtener datos JSON',
+                    'chart_data': {
+                        'symbol': symbol,
+                        'interval': interval,
+                        'last_price': float(df['close'].iloc[-1]) if not df.empty else None,
+                        'data_points': len(df) if not df.empty else 0
+                    }
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'Error al generar imagen: {str(chrome_error)}'
+                })
         
     except Exception as e:
         return jsonify({
@@ -571,8 +702,17 @@ def health():
             'service': 'OKX Candlestick Analyzer',
             'credentials_configured': all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]),
             'dependencies_loaded': DEPENDENCIES_LOADED,
+            'kaleido_available': KALEIDO_AVAILABLE,
+            'matplotlib_available': MATPLOTLIB_AVAILABLE,
             'python_version': '3.11.5',
-            'port': os.environ.get('PORT', '8080')
+            'port': os.environ.get('PORT', '8080'),
+            'endpoints': {
+                'data': '/api/candles',
+                'n8n': '/api/n8n',
+                'n8n_image': '/api/n8n-image',
+                'chart_image': '/api/chart-image',
+                'health': '/health'
+            }
         })
     except Exception as e:
         return jsonify({
@@ -590,6 +730,140 @@ def test():
         'status': 'success',
         'dependencies_loaded': DEPENDENCIES_LOADED
     })
+
+@app.route('/api/n8n')
+def api_n8n():
+    """Endpoint específico para n8n - solo datos JSON sin imágenes"""
+    try:
+        if not DEPENDENCIES_LOADED:
+            return jsonify({
+                'success': False,
+                'error': 'Las dependencias no se cargaron correctamente'
+            })
+        
+        # Verificar que las credenciales estén configuradas
+        if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
+            return jsonify({
+                'success': False,
+                'error': 'Las credenciales de la API no están configuradas correctamente'
+            })
+        
+        symbol = request.args.get('symbol', 'BTC-USDT')
+        interval = request.args.get('interval', '5m')
+        
+        # Obtener datos
+        data = get_candlestick_data(symbol, interval)
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No se pudieron obtener datos de la API'
+            })
+        
+        # Crear DataFrame
+        df = create_dataframe(data)
+        
+        if df is None or df.empty:
+            return jsonify({
+                'success': False,
+                'error': 'No hay datos disponibles'
+            })
+        
+        # Obtener la última vela
+        latest_candle = df.iloc[-1]
+        
+        # Calcular estadísticas
+        change = latest_candle['close'] - latest_candle['open']
+        change_percent = (change / latest_candle['open']) * 100
+        
+        return jsonify({
+            'success': True,
+            'timestamp': datetime.now().isoformat(),
+            'symbol': symbol,
+            'interval': interval,
+            'current_price': float(latest_candle['close']),
+            'open_price': float(latest_candle['open']),
+            'high_price': float(latest_candle['high']),
+            'low_price': float(latest_candle['low']),
+            'volume': float(latest_candle['volume']),
+            'change': float(change),
+            'change_percent': float(change_percent),
+            'trend': 'up' if change >= 0 else 'down',
+            'candles_count': len(df),
+            'last_update': latest_candle.name.isoformat() if hasattr(latest_candle.name, 'isoformat') else str(latest_candle.name)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        })
+
+@app.route('/api/n8n-image')
+def api_n8n_image():
+    """Endpoint específico para n8n - imagen PNG usando matplotlib"""
+    try:
+        if not DEPENDENCIES_LOADED:
+            return jsonify({
+                'success': False,
+                'error': 'Las dependencias no se cargaron correctamente'
+            })
+        
+        # Verificar que las credenciales estén configuradas
+        if not all([OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE]):
+            return jsonify({
+                'success': False,
+                'error': 'Las credenciales de la API no están configuradas correctamente'
+            })
+        
+        symbol = request.args.get('symbol', 'BTC-USDT')
+        interval = request.args.get('interval', '5m')
+        
+        # Obtener datos
+        data = get_candlestick_data(symbol, interval)
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No se pudieron obtener datos de la API'
+            })
+        
+        # Crear DataFrame
+        df = create_dataframe(data)
+        
+        if df is None or df.empty:
+            return jsonify({
+                'success': False,
+                'error': 'No hay datos disponibles'
+            })
+        
+        # Intentar generar imagen con matplotlib
+        try:
+            if MATPLOTLIB_AVAILABLE:
+                img_bytes = create_matplotlib_chart(df, symbol)
+                if img_bytes:
+                    return send_file(
+                        io.BytesIO(img_bytes),
+                        mimetype='image/png'
+                    )
+        except Exception as e:
+            print(f"Error generating matplotlib chart: {e}")
+        
+        # Si matplotlib no está disponible o falla, devolver error
+        return jsonify({
+            'success': False,
+            'error': 'No se puede generar imagen (matplotlib no disponible o error)',
+            'alternative': 'Use /api/n8n para obtener datos JSON',
+            'matplotlib_available': MATPLOTLIB_AVAILABLE
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        })
 
 @app.route('/debug')
 def debug():

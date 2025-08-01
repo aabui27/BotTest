@@ -1,6 +1,7 @@
 # 🔐 Archivos de credenciales
 .env
 env_config.py
+local_config.py
 
 # Python
 __pycache__/
